@@ -240,6 +240,47 @@ def build_features(df, embed_dict, fp_dict, layer=-1):
             np.array(ligand_features), np.array(targets))
 
 
+def concordance_index(y_true, y_pred):
+    """Compute concordance index (CI) in O(n log n) using sorted groups + searchsorted."""
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+    order = np.argsort(y_true)
+    y_true_s = y_true[order]
+    y_pred_s = y_pred[order]
+
+    n = len(y_true_s)
+    total_pairs = n * (n - 1) / 2
+    unique, counts = np.unique(y_true_s, return_counts=True)
+    tied_true = sum(c * (c - 1) / 2 for c in counts)
+    comparable = total_pairs - tied_true
+    if comparable == 0:
+        return 0.0
+
+    # Group by unique y_true values. For each group, count concordant/tied
+    # pairs against all previous groups using a sorted array + searchsorted.
+    concordant = 0.0
+    tied_pred = 0.0
+    prev_sorted = np.array([], dtype=np.float64)
+
+    split_indices = np.searchsorted(y_true_s, unique, side='right')
+    start = 0
+    for end in split_indices:
+        group_preds = y_pred_s[start:end]
+        if len(prev_sorted) > 0:
+            for gp in group_preds:
+                # Number of previous preds strictly less than gp
+                idx = np.searchsorted(prev_sorted, gp, side='left')
+                concordant += idx
+                # Number of previous preds equal to gp
+                idx_right = np.searchsorted(prev_sorted, gp, side='right')
+                tied_pred += (idx_right - idx)
+        # Merge group into sorted previous predictions
+        prev_sorted = np.sort(np.concatenate([prev_sorted, group_preds]))
+        start = end
+
+    return (concordant + 0.5 * tied_pred) / comparable
+
+
 def evaluate_probe(X_train, y_train, X_test, y_test, name="Probe"):
     """Train Ridge regression and evaluate."""
     model = RidgeCV(alphas=np.logspace(-3, 3, 20))
@@ -247,12 +288,13 @@ def evaluate_probe(X_train, y_train, X_test, y_test, name="Probe"):
     y_pred = model.predict(X_test)
 
     r, p_val = stats.pearsonr(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    mse = mean_squared_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
+    ci = concordance_index(y_test, y_pred)
 
-    print(f"  {name:30s} | Pearson r={r:.4f} (p={p_val:.2e}) | RMSE={rmse:.4f} | R²={r2:.4f}")
-    return {"name": name, "pearson_r": r, "p_value": p_val, "rmse": rmse, "r2": r2,
-            "alpha": model.alpha_}
+    print(f"  {name:30s} | r={r:.4f} | MSE={mse:.4f} | R²={r2:.4f} | CI={ci:.4f}")
+    return {"name": name, "pearson_r": r, "p_value": p_val, "mse": mse, "r2": r2,
+            "ci": ci, "alpha": model.alpha_}
 
 
 def run_layer_analysis(df, embed_dict, fp_dict, train_idx, test_idx):

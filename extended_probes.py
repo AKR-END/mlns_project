@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from feasibility_test import (
     download_davis, load_davis, compute_ligand_fingerprints,
     extract_esm2_embeddings, build_features, evaluate_probe,
-    DEVICE, EMBED_DIR,
+    concordance_index, DEVICE, EMBED_DIR,
 )
 
 
@@ -98,11 +98,12 @@ def evaluate_mlp(model, X_test, y_test, name="MLP"):
         y_pred = model(X_t).cpu().numpy()
 
     r, p_val = stats.pearsonr(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    mse = mean_squared_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
+    ci = concordance_index(y_test, y_pred)
 
-    print(f"  {name:45s} | r={r:.4f} | RMSE={rmse:.4f} | R²={r2:.4f}")
-    return {"name": name, "pearson_r": r, "p_value": p_val, "rmse": rmse, "r2": r2}
+    print(f"  {name:45s} | r={r:.4f} | MSE={mse:.4f} | R²={r2:.4f} | CI={ci:.4f}")
+    return {"name": name, "pearson_r": r, "p_value": p_val, "mse": mse, "r2": r2, "ci": ci}
 
 
 # ── Learned Layer Weighting ───────────────────────────────────────────────────
@@ -132,40 +133,44 @@ class LayerWeightedProbe(nn.Module):
         return self.head(combined).squeeze(-1)
 
 
-def build_all_layer_features(df, embed_dict, fp_dict):
-    """Build feature tensors with all layer embeddings stacked."""
-    sample_prot = next(iter(embed_dict.values()))
-    num_layers = max(sample_prot.keys()) + 1
-    embed_dim = sample_prot[0].shape[0]
+class LazyLayerDataset(torch.utils.data.Dataset):
+    """Loads layer embeddings on-the-fly from embed_dict to avoid materializing full tensor."""
+    def __init__(self, df, indices, embed_dict, fp_dict):
+        self.rows = df.iloc[indices].reset_index(drop=True)
+        self.embed_dict = embed_dict
+        self.fp_dict = fp_dict
+        sample = next(iter(embed_dict.values()))
+        self.num_layers = max(sample.keys()) + 1
+        self.embed_dim = sample[0].shape[0]
 
-    all_layer_embs = []
-    ligand_fps = []
-    targets = []
+    def __len__(self):
+        return len(self.rows)
 
-    for _, row in df.iterrows():
+    def __getitem__(self, idx):
+        row = self.rows.iloc[idx]
         pname = row["protein_name"]
         lname = row["ligand_name"]
-
-        layer_stack = torch.stack([embed_dict[pname][l] for l in range(num_layers)])
-        all_layer_embs.append(layer_stack)
-        ligand_fps.append(torch.FloatTensor(fp_dict[lname]))
-        targets.append(row["pKd"])
-
-    return (torch.stack(all_layer_embs), torch.stack(ligand_fps),
-            np.array(targets), num_layers, embed_dim)
+        layer_stack = torch.stack([self.embed_dict[pname][l] for l in range(self.num_layers)])
+        fp = torch.FloatTensor(self.fp_dict[lname])
+        target = torch.tensor(row["pKd"], dtype=torch.float32)
+        return layer_stack, fp, target
 
 
-def train_layer_weighted(layer_embs_train, fp_train, y_train,
-                         layer_embs_val, fp_val, y_val,
-                         num_layers, embed_dim, ligand_dim,
+def train_layer_weighted(df, train_idx, val_idx, embed_dict, fp_dict,
                          hidden_dims=None, lr=1e-3, epochs=100,
                          batch_size=512, patience=10):
+    train_ds = LazyLayerDataset(df, train_idx, embed_dict, fp_dict)
+    val_ds = LazyLayerDataset(df, val_idx, embed_dict, fp_dict)
+    num_layers = train_ds.num_layers
+    embed_dim = train_ds.embed_dim
+    ligand_dim = 2048
+
     model = LayerWeightedProbe(num_layers, embed_dim, ligand_dim, hidden_dims).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     criterion = nn.MSELoss()
 
-    train_ds = TensorDataset(layer_embs_train, fp_train, torch.FloatTensor(y_train))
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
 
     best_val_loss = float("inf")
     best_state = None
@@ -181,9 +186,13 @@ def train_layer_weighted(layer_embs_train, fp_train, y_train,
             optimizer.step()
 
         model.eval()
+        val_losses = []
         with torch.no_grad():
-            val_pred = model(layer_embs_val.to(DEVICE), fp_val.to(DEVICE))
-            val_loss = criterion(val_pred, torch.FloatTensor(y_val).to(DEVICE)).item()
+            for emb_b, fp_b, y_b in val_loader:
+                emb_b, fp_b, y_b = emb_b.to(DEVICE), fp_b.to(DEVICE), y_b.to(DEVICE)
+                pred = model(emb_b, fp_b)
+                val_losses.append(criterion(pred, y_b).item() * len(y_b))
+        val_loss = sum(val_losses) / len(val_ds)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -200,24 +209,33 @@ def train_layer_weighted(layer_embs_train, fp_train, y_train,
     return model
 
 
-def evaluate_layer_weighted(model, layer_embs_test, fp_test, y_test, name="LayerWeighted"):
+def evaluate_layer_weighted(model, df, test_idx, embed_dict, fp_dict, y_test,
+                            name="LayerWeighted", batch_size=512):
+    test_ds = LazyLayerDataset(df, test_idx, embed_dict, fp_dict)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+
     model.eval()
+    all_preds = []
     with torch.no_grad():
-        y_pred = model(layer_embs_test.to(DEVICE), fp_test.to(DEVICE)).cpu().numpy()
+        for emb_b, fp_b, _ in test_loader:
+            emb_b, fp_b = emb_b.to(DEVICE), fp_b.to(DEVICE)
+            all_preds.append(model(emb_b, fp_b).cpu())
+    y_pred = torch.cat(all_preds).numpy()
 
     r, p_val = stats.pearsonr(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    mse = mean_squared_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
+    ci = concordance_index(y_test, y_pred)
 
-    print(f"  {name:45s} | r={r:.4f} | RMSE={rmse:.4f} | R²={r2:.4f}")
+    print(f"  {name:45s} | r={r:.4f} | MSE={mse:.4f} | R²={r2:.4f} | CI={ci:.4f}")
 
     weights = torch.softmax(model.layer_weights.data.cpu(), dim=0).numpy()
     top3 = np.argsort(weights)[-3:][::-1]
     weight_str = ", ".join(f"L{i}={weights[i]:.3f}" for i in top3)
     print(f"    Top-3 layer weights: {weight_str}")
 
-    return {"name": name, "pearson_r": r, "p_value": p_val, "rmse": rmse, "r2": r2,
-            "layer_weights": weights}
+    return {"name": name, "pearson_r": r, "p_value": p_val, "mse": mse, "r2": r2,
+            "ci": ci, "layer_weights": weights}
 
 
 # ── 650M embedding extraction (manual, handles missing regression head) ───────
@@ -304,28 +322,18 @@ def run_experiments_for_model(model_label, embed_dict, df, fp_dict,
         r = evaluate_mlp(m, X_test, y_test, f"{model_label} MLP {tag}")
         results.append(r)
 
-    # -- Layer-weighted probes --
-    layer_embs, ligand_fps, _, num_layers, embed_dim = build_all_layer_features(
-        df, embed_dict, fp_dict)
-    ligand_dim = ligand_fps.shape[1]
-    le_train = layer_embs[train_idx]
-    le_val = layer_embs[val_idx]
-    le_test = layer_embs[test_idx]
-    fp_tr = ligand_fps[train_idx]
-    fp_vl = ligand_fps[val_idx]
-    fp_te = ligand_fps[test_idx]
-
+    # -- Layer-weighted probes (lazy loading to avoid OOM) --
     print(f"\n--- Learned layer weighting (linear head) ---")
-    m = train_layer_weighted(le_train, fp_tr, y_train, le_val, fp_vl, y_val,
-                             num_layers, embed_dim, ligand_dim, hidden_dims=None)
-    r = evaluate_layer_weighted(m, le_test, fp_te, y_test,
+    m = train_layer_weighted(df, train_idx, val_idx, embed_dict, fp_dict,
+                             hidden_dims=None)
+    r = evaluate_layer_weighted(m, df, test_idx, embed_dict, fp_dict, y_test,
                                 f"{model_label} LayerW+Linear")
     results.append(r)
 
     print(f"\n--- Learned layer weighting (MLP head) ---")
-    m = train_layer_weighted(le_train, fp_tr, y_train, le_val, fp_vl, y_val,
-                             num_layers, embed_dim, ligand_dim, hidden_dims=[512, 256])
-    r = evaluate_layer_weighted(m, le_test, fp_te, y_test,
+    m = train_layer_weighted(df, train_idx, val_idx, embed_dict, fp_dict,
+                             hidden_dims=[512, 256])
+    r = evaluate_layer_weighted(m, df, test_idx, embed_dict, fp_dict, y_test,
                                 f"{model_label} LayerW+MLP[512,256]")
     results.append(r)
 
@@ -349,18 +357,6 @@ def main():
 
     all_results = {}
 
-    # ── ESM-2 8M ──
-    embed_8m = extract_esm2_embeddings(df, model_name="esm2_t6_8M_UR50D")
-    all_results["8M"] = run_experiments_for_model(
-        "8M", embed_8m, df, fp_dict, train_idx, val_idx, test_idx)
-    del embed_8m
-
-    # ── ESM-2 35M ──
-    embed_35m = extract_esm2_embeddings(df, model_name="esm2_t12_35M_UR50D")
-    all_results["35M"] = run_experiments_for_model(
-        "35M", embed_35m, df, fp_dict, train_idx, val_idx, test_idx)
-    del embed_35m
-
     # ── ESM-2 650M ──
     embed_650m = extract_650m_all_layers(df)
     all_results["650M"] = run_experiments_for_model(
@@ -371,13 +367,13 @@ def main():
     print(f"\n{'=' * 70}")
     print("SUMMARY TABLE")
     print(f"{'=' * 70}")
-    print(f"{'Probe':<45s} | {'r':>6s} | {'RMSE':>6s} | {'R²':>6s}")
-    print("-" * 70)
-    for size in ["8M", "35M", "650M"]:
+    print(f"{'Probe':<45s} | {'r':>6s} | {'MSE':>6s} | {'R²':>6s} | {'CI':>6s}")
+    print("-" * 80)
+    for size in ["650M"]:
         for r in all_results[size]:
             name = r["name"]
-            print(f"  {name:<43s} | {r['pearson_r']:>6.4f} | {r['rmse']:>6.4f} | {r['r2']:>6.4f}")
-        print("-" * 70)
+            print(f"  {name:<43s} | {r['pearson_r']:>6.4f} | {r['mse']:>6.4f} | {r['r2']:>6.4f} | {r['ci']:>6.4f}")
+        print("-" * 80)
 
 
 if __name__ == "__main__":
