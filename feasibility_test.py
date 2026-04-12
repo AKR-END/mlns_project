@@ -90,8 +90,9 @@ def load_davis():
 # ── Step 2: Ligand fingerprints ────────────────────────────────────────────────
 def compute_ligand_fingerprints(df, n_bits=2048, radius=2):
     from rdkit import Chem
-    from rdkit.Chem import AllChem
+    from rdkit.Chem import rdFingerprintGenerator
 
+    gen = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=n_bits)
     unique_smiles = df[["ligand_name", "smiles"]].drop_duplicates()
     fp_dict = {}
     for _, row in unique_smiles.iterrows():
@@ -100,8 +101,7 @@ def compute_ligand_fingerprints(df, n_bits=2048, radius=2):
             print(f"WARNING: Could not parse SMILES for {row['ligand_name']}")
             fp_dict[row["ligand_name"]] = np.zeros(n_bits)
             continue
-        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
-        fp_dict[row["ligand_name"]] = np.array(fp)
+        fp_dict[row["ligand_name"]] = gen.GetFingerprintAsNumPy(mol).astype(np.float64)
 
     print(f"Computed Morgan FPs for {len(fp_dict)} ligands ({n_bits}-bit, radius={radius})")
     return fp_dict
