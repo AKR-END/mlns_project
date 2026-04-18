@@ -16,6 +16,7 @@ Outputs:
 import os
 import sys
 import json
+import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -35,7 +36,9 @@ from utils import *
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_layer_analysis(train_pn, train_ln, train_targets_std, tr_idx,
-                       val_codes, val_targets_std, val_morgan,
+                       train_useqs_only, train_unames_only,
+                       val_seqs, val_codes, val_targets_std, val_morgan,
+                       test_seqs,
                        test_codes, test_targets, test_morgan,
                        t_mean, t_std, train_morgan):
     """Per-layer probes for all 3 ESM sizes."""
@@ -45,6 +48,7 @@ def run_layer_analysis(train_pn, train_ln, train_targets_std, tr_idx,
     print("=" * 80)
 
     layer_results = {}
+    layer_summary = {}
 
     for label in ESM_CONFIGS:
         cfg = ESM_CONFIGS[label]
@@ -52,14 +56,14 @@ def run_layer_analysis(train_pn, train_ln, train_targets_std, tr_idx,
 
         print(f"\n--- ESM-2 {label} ({num_layers} layers) ---")
 
-        # Load all-layer embeddings
-        # We already have these cached from ablation; reuse same cache names
+        # Load/extract all-layer embeddings for this scale.
+        # Passing real sequence/name pairs makes this robust when cache is absent.
         tr_alllayer = extract_esm2_embeddings(
-            [], [], f"jglaser100k", label, all_layers=True)
+            train_useqs_only, train_unames_only, f"jglaser100k", label, all_layers=True)
         va_alllayer = extract_esm2_embeddings(
-            [], [], f"pdbbind_val", label, all_layers=True)
+            val_seqs, val_codes, f"pdbbind_val", label, all_layers=True)
         te_alllayer = extract_esm2_embeddings(
-            [], [], f"pdbbind_test", label, all_layers=True)
+            test_seqs, test_codes, f"pdbbind_test", label, all_layers=True)
 
         layer_cis = []
         for l in range(num_layers):
@@ -93,7 +97,15 @@ def run_layer_analysis(train_pn, train_ln, train_targets_std, tr_idx,
 
         layer_results[label] = layer_cis
         peak = np.argmax(layer_cis)
+        layer_summary[label] = {
+            "peak_layer": int(peak),
+            "peak_ci": float(layer_cis[peak]),
+            "spread_var": float(np.var(layer_cis)),
+            "spread_std": float(np.std(layer_cis)),
+            "num_layers": int(num_layers),
+        }
         print(f"  Peak layer: L{peak} (CI={layer_cis[peak]:.4f})")
+        print(f"  Spread (var): {np.var(layer_cis):.6f}")
         print(f"  Spread (std): {np.std(layer_cis):.4f}")
 
     # Plot
@@ -120,14 +132,64 @@ def run_layer_analysis(train_pn, train_ln, train_targets_std, tr_idx,
         json.dump({k: [float(x) for x in v] for k, v in layer_results.items()}, f, indent=2)
     print("Saved layer_results.json")
 
-    return layer_results
+    with open("layer_summary.json", "w") as f:
+        json.dump(layer_summary, f, indent=2)
+    print("Saved layer_summary.json")
+
+    return layer_results, layer_summary
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STEP 3: RESIDUE-LEVEL INTERPRETABILITY
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def run_interpretability(model, test_codes, test_seqs, te_res, te_morgan):
+def _safe_auc(y_true, y_score):
+    try:
+        return float(roc_auc_score(y_true, y_score))
+    except Exception:
+        return 0.5
+
+
+def _precision_at_k(labels_bool, scores, k):
+    n = len(scores)
+    if n == 0:
+        return 0.0
+    k = int(max(1, min(k, n)))
+    top_k = np.argsort(scores)[-k:]
+    return float(labels_bool[top_k].sum() / k)
+
+
+def _plot_sequence_attention_heatmaps(samples, out_path):
+    if len(samples) == 0:
+        return
+
+    n = len(samples)
+    fig, axes = plt.subplots(n, 1, figsize=(14, max(2.2 * n, 4.0)), squeeze=False)
+    axes = axes[:, 0]
+
+    for ax, s in zip(axes, samples):
+        attn = s["attn"]
+        pocket_mask = s["pocket_mask"]
+        code = s["code"]
+        auc = s["attn_auc"]
+
+        ax.imshow(attn[np.newaxis, :], aspect="auto", cmap="viridis")
+        pocket_pos = np.where(pocket_mask)[0]
+        if len(pocket_pos) > 0:
+            ax.scatter(pocket_pos, np.zeros_like(pocket_pos), color="red", s=8,
+                       marker="|", label="Pocket")
+        ax.set_yticks([])
+        ax.set_ylabel(code, rotation=0, labelpad=24, va="center")
+        ax.set_title(f"{code}: attention vs sequence (AUC={auc:.3f})", fontsize=9)
+
+    axes[-1].set_xlabel("Residue index")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    print(f"Saved {out_path}")
+
+
+def run_interpretability(model, test_codes, test_seqs, te_res, te_morgan,
+                         precision_ks=(10, 25, 50), num_heatmaps=6):
     """Pocket overlap + gradient attribution on CASF-2016 test set."""
 
     print("\n" + "=" * 80)
@@ -136,6 +198,8 @@ def run_interpretability(model, test_codes, test_seqs, te_res, te_morgan):
 
     enrichments, aurocs, grad_aurocs, attn_grad_corrs = [], [], [], []
     all_attn_pocket, all_attn_nonpocket = [], []
+    precision_at_k = {int(k): [] for k in precision_ks}
+    per_complex = []
 
     for i, code in enumerate(test_codes):
         _, pocket_mask = get_pocket_mask(code)
@@ -175,19 +239,36 @@ def run_interpretability(model, test_codes, test_seqs, te_res, te_morgan):
         all_attn_pocket.extend(attn_w[pocket_mask].tolist())
         all_attn_nonpocket.extend(attn_w[~pocket_mask].tolist())
 
+        p_at_pocket = _precision_at_k(pocket_mask, attn_w, int(n_pocket))
         k = n_pocket
         top_k = np.argsort(attn_w)[-k:]
         prec = pocket_mask[top_k].sum() / k
         expected = n_pocket / len(pocket_mask)
         enrichments.append(prec / expected if expected > 0 else 0)
 
-        try: aurocs.append(roc_auc_score(pocket_mask.astype(int), attn_w))
-        except: aurocs.append(0.5)
-        try: grad_aurocs.append(roc_auc_score(pocket_mask.astype(int), grad_w))
-        except: grad_aurocs.append(0.5)
+        for pk in precision_ks:
+            precision_at_k[int(pk)].append(_precision_at_k(pocket_mask, attn_w, int(pk)))
+
+        attn_auc = _safe_auc(pocket_mask.astype(int), attn_w)
+        grad_auc = _safe_auc(pocket_mask.astype(int), grad_w)
+        aurocs.append(attn_auc)
+        grad_aurocs.append(grad_auc)
 
         corr, _ = stats.spearmanr(attn_w, grad_w)
         attn_grad_corrs.append(corr)
+
+        per_complex.append({
+            "code": code,
+            "seq_len": int(seq_len),
+            "n_pocket": int(n_pocket),
+            "attn_auc": float(attn_auc),
+            "grad_auc": float(grad_auc),
+            "precision_at_pocket_size": float(p_at_pocket),
+            "enrichment": float(enrichments[-1]),
+            "attn_grad_spearman": float(corr),
+            "attn": attn_w.astype(float).tolist(),
+            "pocket_mask": pocket_mask.astype(bool).tolist(),
+        })
 
     n = len(enrichments)
     print(f"\nAnalyzed {n} complexes with pocket annotations")
@@ -195,6 +276,11 @@ def run_interpretability(model, test_codes, test_seqs, te_res, te_morgan):
     print(f"  Attn AUC-ROC: {np.mean(aurocs):.4f} +/- {np.std(aurocs):.4f}")
     print(f"  Grad AUC-ROC: {np.mean(grad_aurocs):.4f} +/- {np.std(grad_aurocs):.4f}")
     print(f"  Attn-Grad Spearman: {np.mean(attn_grad_corrs):.4f}")
+    for pk in sorted(precision_at_k):
+        vals = precision_at_k[pk]
+        if len(vals) == 0:
+            continue
+        print(f"  Precision@{pk}: {np.mean(vals):.4f} +/- {np.std(vals):.4f}")
 
     pocket_ratio = np.mean(all_attn_pocket) / (np.mean(all_attn_nonpocket) + 1e-10)
     _, p_val = stats.mannwhitneyu(all_attn_pocket, all_attn_nonpocket,
@@ -252,14 +338,26 @@ def run_interpretability(model, test_codes, test_seqs, te_res, te_morgan):
     plt.savefig("interpretability.png", dpi=150, bbox_inches="tight")
     print("Saved interpretability.png")
 
+    # One strong sequence-level figure: top complexes by attention AUC.
+    top_samples = sorted(per_complex, key=lambda x: x["attn_auc"], reverse=True)[:num_heatmaps]
+    _plot_sequence_attention_heatmaps(top_samples, "sequence_attention_heatmaps.png")
+
     results = {"enrichment": np.mean(enrichments), "auroc": np.mean(aurocs),
                "grad_auroc": np.mean(grad_aurocs),
                "attn_grad_corr": np.mean(attn_grad_corrs),
                "pocket_ratio": pocket_ratio, "p_value": p_val,
-               "conclusion": conclusion}
+               "conclusion": conclusion,
+               "precision_at_k": {
+                   str(pk): float(np.mean(vals)) if len(vals) else 0.0
+                   for pk, vals in precision_at_k.items()
+               }}
     with open("interp_results.json", "w") as f:
         json.dump(results, f, indent=2)
     print("Saved interp_results.json")
+
+    with open("interp_per_complex.json", "w") as f:
+        json.dump(per_complex, f, indent=2)
+    print("Saved interp_per_complex.json")
 
     return results
 
@@ -485,16 +583,32 @@ def run_attention_comparison(train_pn, train_ln, train_targets_std, tr_idx,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    torch.manual_seed(42)
-    np.random.seed(42)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train-samples", type=int, default=100000,
+                        help="Number of jglaser training samples to use")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--run-length-analysis", action="store_true",
+                        help="Also run pooling/length analysis (Step 4)")
+    parser.add_argument("--run-attention-comparison", action="store_true",
+                        help="Also run 4x3 attention architecture comparison")
+    parser.add_argument("--precision-ks", type=str, default="10,25,50",
+                        help="Comma-separated K values for Precision@K")
+    parser.add_argument("--num-heatmaps", type=int, default=6,
+                        help="Number of sequence heatmaps to plot")
+    args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    precision_ks = tuple(int(x.strip()) for x in args.precision_ks.split(",") if x.strip())
 
     print("=" * 80)
-    print("ANALYSIS: Layers, Residues, Length, Attention Architectures")
-    print("Train: jglaser 10k | Val: PDBbind refined-core | Test: CASF-2016")
+    print("ANALYSIS: Layer-level + Residue-level interpretability")
+    print(f"Train: jglaser {args.train_samples} | Val: PDBbind refined-core | Test: CASF-2016")
     print("=" * 80)
 
     # ── Load data ──
-    train_seqs, train_smiles, train_targets, train_pn, train_ln = load_jglaser(10000)
+    train_seqs, train_smiles, train_targets, train_pn, train_ln = load_jglaser(args.train_samples)
     t_mean, t_std = train_targets.mean(), train_targets.std()
     train_targets_std = (train_targets - t_mean) / t_std
 
@@ -507,7 +621,6 @@ def main():
     tr_idx = perm[:int(0.9 * n)]
 
     # ── Extract embeddings (650M for steps 3-4 and attention comparison) ──
-    train_unames = list(set(train_pn))
     train_useqs = list(set(zip(train_pn, train_seqs)))
     train_useqs_only = [s for _, s in train_useqs]
     train_unames_only = [n for n, _ in train_useqs]
@@ -542,7 +655,10 @@ def main():
 
     # ── Step 2: Layer analysis ──
     run_layer_analysis(train_pn, train_ln, train_targets_std, tr_idx,
+                       train_useqs_only, train_unames_only,
+                       val_seqs,
                        val_codes, val_targets_std, val_morgan,
+                       test_seqs,
                        test_codes, test_targets, test_morgan,
                        t_mean, t_std, train_morgan)
 
@@ -559,37 +675,50 @@ def main():
         DataLoader(va_ds, 512, collate_fn=residue_collate_fn),
         fwd_residue, patience=20)
 
-    run_interpretability(attn_model, test_codes, test_seqs, te_res, test_morgan)
+    run_interpretability(attn_model, test_codes, test_seqs, te_res, test_morgan,
+                         precision_ks=precision_ks,
+                         num_heatmaps=args.num_heatmaps)
 
-    # ── Step 4: Length analysis (need mean model too) ──
-    va_mean = extract_esm2_embeddings(val_seqs, val_codes, "pdbbind_val", "650M")
-    va_concat = ConcatDS(val_codes, val_codes, val_targets_std, va_mean, val_morgan)
-    tr_concat = ConcatDS([train_pn[i] for i in tr_idx],
-                         [train_ln[i] for i in tr_idx],
-                         train_targets_std[tr_idx], tr_mean, train_morgan)
-    mean_model = train_loop(
-        MLPProbe(cfg["dim"] + 2048),
-        DataLoader(tr_concat, 512, shuffle=True, num_workers=4),
-        DataLoader(va_concat, 512, num_workers=4),
-        fwd_concat, patience=20)
+    # Optional extras for deeper architecture analysis.
+    if args.run_length_analysis:
+        va_mean = extract_esm2_embeddings(val_seqs, val_codes, "pdbbind_val", "650M")
+        va_concat = ConcatDS(val_codes, val_codes, val_targets_std, va_mean, val_morgan)
+        tr_concat = ConcatDS([train_pn[i] for i in tr_idx],
+                             [train_ln[i] for i in tr_idx],
+                             train_targets_std[tr_idx], tr_mean, train_morgan)
+        mean_model = train_loop(
+            MLPProbe(cfg["dim"] + 2048),
+            DataLoader(tr_concat, 512, shuffle=True, num_workers=4),
+            DataLoader(va_concat, 512, num_workers=4),
+            fwd_concat, patience=20)
 
-    run_length_analysis(mean_model, attn_model, test_codes, test_seqs,
-                        test_targets, te_mean, te_res, test_morgan, t_mean, t_std)
-    del mean_model, attn_model; torch.cuda.empty_cache()
+        run_length_analysis(mean_model, attn_model, test_codes, test_seqs,
+                            test_targets, te_mean, te_res, test_morgan, t_mean, t_std)
+        del mean_model
+        torch.cuda.empty_cache()
 
-    # ── 4×3 Attention comparison ──
-    run_attention_comparison(
-        train_pn, train_ln, train_targets_std, tr_idx,
-        val_codes, val_targets_std, val_morgan,
-        test_codes, test_targets, test_morgan,
-        tr_res, va_res, te_res, tr_layer, va_layer, te_layer,
-        train_morgan, t_mean, t_std)
+    if args.run_attention_comparison:
+        run_attention_comparison(
+            train_pn, train_ln, train_targets_std, tr_idx,
+            val_codes, val_targets_std, val_morgan,
+            test_codes, test_targets, test_morgan,
+            tr_res, va_res, te_res, tr_layer, va_layer, te_layer,
+            train_morgan, t_mean, t_std)
+
+    del attn_model
+    torch.cuda.empty_cache()
 
     print("\n" + "=" * 80)
-    print("ALL ANALYSIS COMPLETE")
+    print("ANALYSIS COMPLETE")
     print("=" * 80)
-    print("Outputs: layer_analysis.png, interpretability.png, "
-          "length_analysis.png, attention_comparison.png")
+    print("Outputs:")
+    print("  - layer_analysis.png + layer_results.json + layer_summary.json")
+    print("  - interpretability.png + interp_results.json + interp_per_complex.json")
+    print("  - sequence_attention_heatmaps.png")
+    if args.run_length_analysis:
+        print("  - length_analysis.png")
+    if args.run_attention_comparison:
+        print("  - attention_comparison.png + attn_results.json")
 
 
 if __name__ == "__main__":
