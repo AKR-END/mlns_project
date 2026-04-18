@@ -5,93 +5,105 @@ How is protein-ligand binding affinity information encoded in frozen protein lan
 ## Research Questions
 
 1. **What signal exists?** Can frozen ESM-2 embeddings predict binding affinity, and is the signal linear or nonlinear?
-2. **Where does it live?** Which layers and which residues encode binding-relevant information?
-3. **What is lost?** How much information is destroyed by mean pooling vs. preserved by attention pooling?
-4. **What is the bottleneck?** At each stage (encoder, pooling, ligand rep, probe), which component limits performance?
-5. **Does attention localize to binding sites?** Do learned attention weights correspond to crystallographic binding pocket residues?
+2. **Where in the network?** Which ESM-2 layers encode binding-relevant information, and how does this change with model scale?
+3. **Where in the sequence?** Do learned attention weights localize to crystallographic binding pocket residues?
+4. **What is lost?** How much information is destroyed by mean pooling, and does this scale with protein length?
+5. **What is the bottleneck?** At each stage (encoder, pooling, ligand rep, probe), which component limits performance?
+
+## Data Splits
+
+| Split | Source | Size | Purpose |
+|-------|--------|------|---------|
+| Train | jglaser/binding_affinity (HuggingFace) | 100k samples | Training all models |
+| Val | PDBbind v2016 refined set minus core | 3,767 complexes | Early stopping / model selection |
+| Test | PDBbind v2016 core set (CASF-2016) | 290 complexes | Final evaluation |
 
 ## Files
 
-### Core Experiments (run in order)
+### Core
 
-| File | What it does | Status |
-|------|-------------|--------|
-| `feasibility_test.py` | Linear probing (Ridge) on frozen ESM-2 8M + Morgan FP. Baselines, controls, layer-wise analysis. | Done |
-| `extended_probes.py` | MLP probes and learned layer weighting (ELMo-style) on ESM-2 650M. | Done |
-| `ablation_study.py` | 36-experiment ablation: 3 ESM sizes × 3 pooling × 2 ligand reps × 3 probes. Identifies bottleneck at each stage. | Done |
+| File | What it does |
+|------|-------------|
+| `utils.py` | All shared code: data loading, ESM-2 embedding extraction, Morgan FP computation, model definitions (MLPProbe, 4 attention modules, 3 settings), datasets, training loops, metrics, pocket parsing |
+| `feasibility_test.py` | Original feasibility check on Davis (linear probing, baselines, controls). Kept as reference for early results |
 
-### Analysis
+### Experiments
 
-| File | What it does | Status |
-|------|-------------|--------|
-| `analysis.py` | Post-ablation on Davis: error by protein length (does pooling loss scale with length?), attention weight visualization. | Not run |
-| `attention_models.py` | 4 attention methods × 3 settings (9 experiments). Tests protein-only, cross-attention, self-attention+pool, self+cross in MLP+Attention, MLP+LayerW, and MLP+LayerW+Attention settings. | Not run |
-| `interpretability.py` | Binding pocket overlap on PDBbind: attention vs. crystallographic pocket residues, gradient attribution faithfulness, amino acid preference, enrichment statistics. | Not run |
+| File | What it probes | Outputs |
+|------|---------------|---------|
+| `run_ablation.py` | **Step 1: Lock down results.** 36-experiment ablation: 3 ESM sizes × 3 pooling (mean/max/attn) × Ridge/MLP + LayerW+MLP. Computes CI spread per factor, identifies bottleneck | `ablation_results.json`, `ablation_plots.png` |
+| `run_analysis.py` | **Steps 2–4 + attention architectures.** Layer analysis, residue-level interpretability, length analysis, 4×3 attention comparison | `layer_analysis.png`, `interpretability.png`, `length_analysis.png`, `attention_comparison.png` |
 
-### External Evaluation
+### Legacy (in `archive/`)
 
-| File | What it does | Status |
-|------|-------------|--------|
-| `pdbbind_eval.py` | Train on jglaser/binding_affinity (100k), test on PDBbind Test2016_290. Compare against BAPULM paper numbers (r=0.914). | Not run |
-| `train_binding_affinity.py` | Full-scale training on jglaser (1.84M) with ESM-2 650M + Morgan FP MLP. | Done |
+Previous iteration scripts superseded by the consolidated versions above. Kept for reference.
 
-### Visualization
+## Step 1: Ablation Study (`run_ablation.py`)
 
-| File | What it does | Status |
-|------|-------------|--------|
-| `visualize_results.py` | 4-panel ablation figure from `results.json`: pooling effect, scale effect, ligand comparison, bottleneck ranking. | Done |
+36 experiments crossing:
+- **Protein encoder**: ESM-2 {8M, 35M, 650M}
+- **Pooling**: {mean, max, learned attention}
+- **Probe**: {Ridge (linear), MLP [512,256], LayerW+MLP [512,256]}
+- **Ligand**: Morgan FP (2048-bit)
 
-## Datasets
+**Deliverables:**
+- Full results table (CI, Pearson r, RMSE, MSE)
+- CI spread per factor → bottleneck ranking
+- 3 plots: pooling comparison, scale vs performance, linear vs nonlinear gap
+- Takeaways: e.g. "Nonlinear decoding recovers +X CI → signal is not linearly accessible"
 
-| Dataset | Size | Usage |
-|---------|------|-------|
-| Davis (DeepDTA) | 30,056 pairs (442 kinases × 68 drugs) | Primary probing dataset |
-| jglaser/binding_affinity | 1.84M pairs (HuggingFace) | Large-scale training |
-| PDBbind v2016 Core Set | 290 complexes with 3D structures | External benchmark + interpretability |
+## Step 2: Layer-Level Analysis (in `run_analysis.py`)
 
-## Key Findings
+Per-layer Ridge probes for all 3 ESM-2 sizes. Answers "where in the network?"
 
-### From Ablation Study (36 experiments)
+**Deliverables:**
+- CI vs layer curves for 8M, 35M, 650M
+- Peak layer and spread (variance) per model size
+- Key result: "Small models concentrate signal in late layers, large models distribute it"
 
-| Factor | CI Spread | Interpretation |
-|--------|-----------|----------------|
-| Probe architecture | 0.077 | Primary bottleneck — nonlinear probes essential |
-| Pooling strategy | 0.026 | Mean pooling loses modest signal; max pooling hurts |
-| Model scale | 0.022 | Larger models help only with nonlinear probes |
-| Ligand representation | 0.005 | Morgan FP vs ChemBERTa — negligible difference |
+## Step 3: Residue-Level Interpretability (in `run_analysis.py`)
 
-### Summary
+Compares learned attention weights against crystallographic binding pocket residues from PDBbind `*_pocket.pdb` files.
 
-1. Frozen ESM-2 embeddings contain substantial binding affinity signal
-2. Signal is primarily **nonlinear** — linear probes plateau at CI~0.795 regardless of model size
-3. With nonlinear probes, **larger models matter** — 650M significantly outperforms 8M
-4. **Mean pooling** loses modest but real information (~1% CI); **max pooling** actively hurts
-5. **Layer weighting** (learned combination of all layers) improves over last-layer-only
-6. Best: MLP + attention pooling + ESM-2 650M + Morgan FP → CI=0.874
+**Metrics:**
+- AUC-ROC (attention weights as pocket classifier)
+- Precision@K (top-K attended residues vs pocket residues)
+- Pocket enrichment (observed/expected overlap)
+- Gradient attribution: `||d(pred)/d(residue_i)||` — what actually drives predictions
+- Attention faithfulness: Spearman correlation between attention and gradient importance
 
-## Attention Architecture Comparison
+**Deliverable:** One strong figure + one clear conclusion:
+- Attention localizes → **local encoding** (PLM learns binding site features from sequence)
+- Attention is diffuse → **global encoding** (PLM uses whole-protein properties)
 
-`attention_models.py` tests how different attention mechanisms interact with layer weighting:
+## Step 4: Pooling + Length Analysis (in `run_analysis.py`)
 
-**4 attention methods:**
-- **Protein-only**: `Linear(residue, 1)` — same attention regardless of ligand
-- **Cross-attention**: ligand queries protein — different ligands attend to different residues
-- **Self-attention + pool**: self-attention contextualizes residues before pooling
-- **Self-attn + cross-attn**: full pipeline — contextualize then ligand-conditioned selection
+Performance vs protein sequence length for mean-pooled vs attention-pooled MLP.
 
-**3 settings:**
-- **A**: MLP + Attention only (last-layer per-residue → attention pool → MLP)
-- **B**: MLP + Layer Weighting only (all-layer mean-pooled → layer weights → MLP)
-- **C**: MLP + Layer Weighting + Attention (both branches → MLP)
+**Deliverable:** "Pooling destroys more information for longer sequences" (or not)
 
-## Interpretability
+## Attention Architecture Comparison (in `run_analysis.py`)
 
-`interpretability.py` tests whether learned attention localizes to actual binding sites using PDBbind 3D structures:
-- Parses `*_pocket.pdb` files for crystallographic binding pocket residues
-- Computes enrichment: are top-attended residues disproportionately in the pocket?
-- AUC-ROC: attention weights as a binary pocket classifier
-- Gradient attribution: `||d(pred)/d(residue_i)||` — what actually drives predictions vs. what attention highlights
-- Amino acid type analysis: which residue types are preferentially attended?
+4 attention methods × 3 settings = 9 experiments:
+
+**4 Attention Methods:**
+| Method | Formula | Ligand-dependent? |
+|--------|---------|-------------------|
+| Protein-only | `Linear(residue, 1)` | No |
+| Cross-attention | `softmax(lig_query @ prot_keys^T)` | Yes |
+| Self-attn + pool | `SelfAttn(residues) → Linear(ctx, 1)` | No |
+| Self-attn + cross | `SelfAttn(residues) → softmax(lig @ ctx_keys^T)` | Yes |
+
+**3 Settings:**
+| Setting | Architecture |
+|---------|-------------|
+| A: MLP + Attention | `[attn_pool(residues) \|\| ligand] → MLP` |
+| B: MLP + Layer Weighting | `[layer_weighted(layers) \|\| ligand] → MLP` |
+| C: MLP + LayerW + Attention | `[layer_weighted \|\| attn_pool \|\| ligand] → MLP` |
+
+## BAPULM Comparison
+
+BAPULM (Meda & Farimani, arXiv:2411.04150) reports r=0.914, RMSE=0.898 on Test2016_290 using ProtT5 + MolFormer. Our models are evaluated on the same test set for direct comparison. We use their published numbers — no BAPULM re-evaluation.
 
 ## Dependencies
 
@@ -99,12 +111,12 @@ How is protein-ligand binding affinity information encoded in frozen protein lan
 - fair-esm 2.0 (ESM-2 protein language models)
 - RDKit (Morgan fingerprints, SDF/SMILES parsing)
 - scikit-learn, scipy, matplotlib
-- transformers (ChemBERTa), datasets (jglaser loading)
-- BioPython (PDB parsing for PDBbind)
+- datasets (HuggingFace, for jglaser loading)
+- BioPython (PDB parsing)
 
 ## References
 
 - **ESM-2**: Lin et al., "Evolutionary-scale prediction of atomic-level protein structure with a language model," Science 2023
 - **BAPULM**: Meda & Farimani, "Binding Affinity Prediction using Language Models," arXiv:2411.04150
-- **Davis**: Davis et al., "Comprehensive analysis of kinase inhibitor selectivity," Nature Biotechnology 2011
 - **PDBbind**: Liu et al., "PDB-wide collection of binding data," Bioinformatics 2015
+- **jglaser/binding_affinity**: Glaser et al., HuggingFace dataset of protein-ligand binding affinities
