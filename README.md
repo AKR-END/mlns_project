@@ -225,38 +225,6 @@ substantially faster.
 
 MIT — see [LICENSE](./LICENSE).
 
-## Citation
-
-If this code or its analyses are useful in your work, please cite:
-
-```bibtex
-@misc{rajesh2026probing,
-  title  = {Probing Frozen ESM-2 for Protein-Ligand Binding Affinity},
-  author = {Rajesh, Ananth Keshav},
-  year   = {2026},
-  note   = {MLNS course project report.}
-}
-```
-
-Key prior work referenced in the report:
-
-- **BAPULM** (the closest published sequence-only baseline):
-  Meda, R. S., & Farimani, A. B. (2024). *BAPULM: Binding Affinity
-  Prediction using Language Models.* arXiv:2411.04150.
-  https://github.com/radh55sh/BAPULM
-- **ESM-2**: Lin, Z., et al. (2023). *Evolutionary-scale prediction of
-  atomic-level protein structure.* Science, 379(6637).
-  https://doi.org/10.1126/science.ade2574
-- **MolFormer**: Ross, J., et al. (2022). *Large-scale chemical
-  language representations capture molecular structure and properties.*
-  Nat. Mach. Intell., 4:1256-1264.
-  https://doi.org/10.1038/s42256-022-00580-7
-- **ChemBERTa**: Chithrananda, S., et al. (2020). arXiv:2010.09885.
-- **PDBbind**: Wang, R., et al. (2004). *J. Med. Chem.* 47:2977-2980.
-- **CASF-2016**: Su, M., et al. (2019). *J. Chem. Inf. Model.* 59:895-913.
-
-See [`report.md`](./report.md) §9 for the full reference list with DOIs.
-
 ## Acknowledgment of AI tools
 
 [Anthropic Claude](https://www.anthropic.com/claude) was used as a
