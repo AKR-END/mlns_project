@@ -1,0 +1,15 @@
+{
+  "ligand": "ChemBERTa",
+  "enrichment": 1.0955839864681918,
+  "auroc": 0.43073880059439645,
+  "grad_auroc": 0.6388146543935475,
+  "attn_grad_corr": 0.032609478631838766,
+  "pocket_ratio": 1.3526660078112538,
+  "p_value": 0.0,
+  "conclusion": "Weak but significant pocket localization",
+  "precision_at_k": {
+    "10": 0.19107142857142856,
+    "25": 0.17542857142857143,
+    "50": 0.15707142857142858
+  }
+}

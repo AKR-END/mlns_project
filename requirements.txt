@@ -1,0 +1,34 @@
+# Core numerical / ML stack
+numpy
+scipy
+pandas
+scikit-learn
+matplotlib
+
+# PyTorch (GPU). Install via the PyTorch index, see README note below.
+torch
+torchvision
+
+# Protein LM
+fair-esm
+
+# Ligand featurization
+rdkit
+
+# HuggingFace stack (ChemBERTa + MolFormer + dataset loading)
+# NOTE: MolFormer's remote code imports transformers.onnx; that submodule was
+# removed in transformers >=4.50. Pin below that until MolFormer updates.
+transformers<4.50
+onnx
+tokenizers
+sentencepiece
+huggingface_hub
+datasets
+accelerate
+safetensors
+
+# PDB parsing for pocket residues
+biopython
+
+# Misc
+tqdm

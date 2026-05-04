@@ -1,3 +1,12 @@
+# Project-specific: large/scratch artifacts that should never be in the repo
+slurm-*.out                   # SLURM job logs
+*.pt                          # PyTorch checkpoints (kept on /ssd_scratch)
+embeddings/                   # ESM-2 / ChemBERTa / MolFormer caches
+checkpoints/                  # local training checkpoint dir
+hf_cache/                     # HuggingFace caches
+model_cache/                  # ESM-2 hub downloads
+.claude/                      # local Claude Code state
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

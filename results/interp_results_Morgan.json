@@ -1,0 +1,15 @@
+{
+  "ligand": "Morgan",
+  "enrichment": 0.6467957113164652,
+  "auroc": 0.3932547943038066,
+  "grad_auroc": 0.41617345381810106,
+  "attn_grad_corr": 0.16909370252395467,
+  "pocket_ratio": 1.3184666733654433,
+  "p_value": 0.0,
+  "conclusion": "Attention does NOT localize to pockets (global encoding)",
+  "precision_at_k": {
+    "10": 0.09357142857142858,
+    "25": 0.0907142857142857,
+    "50": 0.09807142857142857
+  }
+}

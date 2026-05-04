@@ -1,0 +1,58 @@
+{
+  "config": {
+    "ligand": "MolFormer",
+    "setting": "C",
+    "attn": "protq+cross",
+    "esm_size": "650M",
+    "embed_dim": 1280,
+    "ligand_dim": 768,
+    "num_layers": 34,
+    "train_samples": 100000,
+    "n_train_used": 90000,
+    "n_val": 3767,
+    "n_test": 290,
+    "epochs_max": 200,
+    "patience": 25,
+    "seed": 42,
+    "n_params": 22834469,
+    "checkpoint": "/ssd_scratch/akr/checkpoints/final_MolFormer_SC_protq+cross_650M.pt"
+  },
+  "metrics": {
+    "name": "MolFormer_SC_protq+cross_650M",
+    "r": 0.4663391244172802,
+    "rmse": 2.101249983157561,
+    "mse": 4.41525149171965,
+    "r2": 0.06518656381156274,
+    "ci": 0.6602970368067348
+  },
+  "bootstrap": {
+    "r": {
+      "point": 0.4663391244172802,
+      "ci95": [
+        0.36808249077252725,
+        0.552036102960256
+      ]
+    },
+    "rmse": {
+      "point": 2.101249983157561,
+      "ci95": [
+        1.9498544652604788,
+        2.27131014881339
+      ]
+    },
+    "r2": {
+      "point": 0.06518656381156274,
+      "ci95": [
+        -0.057816035212710185,
+        0.15661922115933768
+      ]
+    },
+    "ci": {
+      "point": 0.6602970368067348,
+      "ci95": [
+        0.6207424394608804,
+        0.694612506540472
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "ligand": "MolFormer",
+  "enrichment": 2.420580728455533,
+  "auroc": 0.7007894919399398,
+  "grad_auroc": 0.6458679673579549,
+  "attn_grad_corr": 0.41813944165281636,
+  "pocket_ratio": 1.5156767278814043,
+  "p_value": 0.0,
+  "conclusion": "Attention LOCALIZES to binding pockets",
+  "precision_at_k": {
+    "10": 0.4732142857142857,
+    "25": 0.4001428571428572,
+    "50": 0.3387857142857143
+  }
+}

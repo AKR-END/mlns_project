@@ -1,0 +1,126 @@
+{
+  "jglaser_subset": "first 100k",
+  "test_sets": {
+    "benchmark1k2101": {
+      "n": 1000,
+      "n_leaked_pairs": 1000,
+      "frac_leaked_pairs": 1.0,
+      "n_leaked_protein_seq": 1000,
+      "frac_leaked_protein_seq": 1.0,
+      "n_leaked_ligand_smi": 1000,
+      "frac_leaked_ligand_smi": 1.0,
+      "bapulm_reported_r": 0.925,
+      "bapulm_reported_rmse": 0.745,
+      "csv_path": "/tmp/BAPULM/data/benchmark1k2101.csv",
+      "examples": [
+        {
+          "pdbid": "?",
+          "test_affinity": 9.1549015,
+          "train_affinity": 9.154901504516602,
+          "seq_len": 110,
+          "smiles": "COc1cc2c3c(Nc4nn(C)c5ccccc45)nc(C)[nH]c-3nc2cc1-c1c(C)noc1C",
+          "seq_preview": "KVSEQLKCSGILKEMFAKKHAAYAWPFYKPVDVEALGLHDYDIIKHPMDMSTIKSKLEAR..."
+        },
+        {
+          "pdbid": "?",
+          "test_affinity": 7.853872,
+          "train_affinity": 7.853871822357178,
+          "seq_len": 264,
+          "smiles": "COc1cc(-c2cnc3[nH]cc(C(=O)NC(C)C)c3n2)cc(OC)c1OC",
+          "seq_preview": "VYLDRKLLTLEDELGSGTVKKGYYQMKKVVKTVAVKILKPALKDELLAEANVMQQLDNPY..."
+        },
+        {
+          "pdbid": "?",
+          "test_affinity": 6.6777806,
+          "train_affinity": 6.677780628204346,
+          "seq_len": 271,
+          "smiles": "c1ccc(-c2oc3nccc(NCC[NH+]4CC[NH2+]CC4)c3c2-c2ccccc2)cc1",
+          "seq_preview": "KPWWEDEWEVPRETLKLVERLGAGQFGEVWMGYYNGHTKVAVKSLKQGSMSPDAFLAEAN..."
+        },
+        {
+          "pdbid": "?",
+          "test_affinity": 9.337242,
+          "train_affinity": 9.337242126464844,
+          "seq_len": 99,
+          "smiles": "COc1ccc(S(=O)(=O)N(C[C@H]2CCC(=O)N2)C[C@@H](O)[C@H](Cc2ccccc2)NC(=O)O[C@@H]2C[C@@H]3CCO[C@@H]3C2)cc1",
+          "seq_preview": "PQITLWKRPLVTIKIGGQLKEALLDTGADDTVIEEMSLPGRWKPKMVGGIGGFIKVRQYD..."
+        },
+        {
+          "pdbid": "?",
+          "test_affinity": 8.09691,
+          "train_affinity": 8.09691047668457,
+          "seq_len": 99,
+          "smiles": "CC(C)C1NC(=O)[C@@H](C(O)[C@H](Cc2ccccc2)NC(=O)[C@@H](NC(=O)OCc2ccccc2)C(C)(C)C)NCc2ccc(cc2)OCCOCCNC1=O",
+          "seq_preview": "PQITLWQRPLVTIKIGGQLKEALLDTGADDTVLEEMNLPGRWKPKMIGGIGGFIKVRQYD..."
+        }
+      ]
+    },
+    "Test2016_290": {
+      "n": 290,
+      "n_leaked_pairs": 37,
+      "frac_leaked_pairs": 0.12758620689655173,
+      "n_leaked_protein_seq": 105,
+      "frac_leaked_protein_seq": 0.3620689655172414,
+      "n_leaked_ligand_smi": 206,
+      "frac_leaked_ligand_smi": 0.7103448275862069,
+      "bapulm_reported_r": 0.914,
+      "bapulm_reported_rmse": 0.898,
+      "csv_path": "/home2/akr/mlns_project/data_extra/Test2016_290.csv",
+      "examples": [
+        {
+          "pdbid": "3gv9",
+          "test_affinity": 2.12,
+          "train_affinity": 2.124938726425171,
+          "seq_len": 358,
+          "smiles": "CC(=O)Nc1ccsc1C(=O)O",
+          "seq_preview": "APQQINDIVHRTITPLIEQQKIPGMAVAVIYQGKPYYFTWGYADIAKKQPVTQQTLFELG..."
+        },
+        {
+          "pdbid": "3gr2",
+          "test_affinity": 2.52,
+          "train_affinity": 2.522878646850586,
+          "seq_len": 358,
+          "smiles": "CC[C@H]1C(=O)N(c2nnn[nH]2)N=C1C",
+          "seq_preview": "APQQINDIVHRTITPLIEQQKIPGMAVAVIYQGKPYYFTWGYADIAKKQPVTQQTLFELG..."
+        },
+        {
+          "pdbid": "3fcq",
+          "test_affinity": 2.77,
+          "train_affinity": 2.7695510387420654,
+          "seq_len": 316,
+          "smiles": "CC(=O)Oc1c(C)cccc1C(=O)O",
+          "seq_preview": "ITGTSTVGVGRGVLGDQKNINTTYSTYYYLQDNTRGDGIFTYDAKYRTTLPGSLWADADN..."
+        },
+        {
+          "pdbid": "3lka",
+          "test_affinity": 2.82,
+          "train_affinity": 2.823908805847168,
+          "seq_len": 158,
+          "smiles": "COc1ccc(S(N)(=O)=O)cc1",
+          "seq_preview": "GPVWRKHYITYRINNYTPDMNREDVDYAIRKAFQVWSNVTPLKFSKINTGMADILVVFAR..."
+        },
+        {
+          "pdbid": "4kz6",
+          "test_affinity": 3.1,
+          "train_affinity": 3.096909999847412,
+          "seq_len": 358,
+          "smiles": "C[C@@H]1CCC[C@H](C(=O)O)N1C(=O)CCS",
+          "seq_preview": "APQQINDIVHRTITPLIEQQKIPGMAVAVIYQGKPYYFTWGYADIAKKQPVTQQTLFELG..."
+        }
+      ]
+    },
+    "CSAR-HiQ_36": {
+      "n": 36,
+      "n_leaked_pairs": 0,
+      "frac_leaked_pairs": 0.0,
+      "n_leaked_protein_seq": 0,
+      "frac_leaked_protein_seq": 0.0,
+      "n_leaked_ligand_smi": 1,
+      "frac_leaked_ligand_smi": 0.027777777777777776,
+      "bapulm_reported_r": 0.813,
+      "bapulm_reported_rmse": 1.328,
+      "csv_path": "/home2/akr/mlns_project/data_extra/CSAR-HiQ_36.csv",
+      "examples": []
+    }
+  }
+}

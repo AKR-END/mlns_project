@@ -1,0 +1,58 @@
+{
+  "config": {
+    "ligand": "Morgan",
+    "setting": "C",
+    "attn": "protq+cross",
+    "esm_size": "650M",
+    "embed_dim": 1280,
+    "ligand_dim": 2048,
+    "num_layers": 34,
+    "train_samples": 100000,
+    "n_train_used": 90000,
+    "n_val": 3767,
+    "n_test": 290,
+    "epochs_max": 200,
+    "patience": 25,
+    "seed": 42,
+    "n_params": 36597029,
+    "checkpoint": "/ssd_scratch/akr/checkpoints/final_Morgan_SC_protq+cross_650M.pt"
+  },
+  "metrics": {
+    "name": "Morgan_SC_protq+cross_650M",
+    "r": 0.5538872267965048,
+    "rmse": 1.9161919609124185,
+    "mse": 3.6717916310653798,
+    "r2": 0.22259464539191876,
+    "ci": 0.6883265969913663
+  },
+  "bootstrap": {
+    "r": {
+      "point": 0.5538872267965048,
+      "ci95": [
+        0.4563796246988476,
+        0.6344089824912359
+      ]
+    },
+    "rmse": {
+      "point": 1.9161919609124185,
+      "ci95": [
+        1.748095666625262,
+        2.098378301668326
+      ]
+    },
+    "r2": {
+      "point": 0.22259464539191876,
+      "ci95": [
+        0.06020439117742857,
+        0.3545004723432116
+      ]
+    },
+    "ci": {
+      "point": 0.6883265969913663,
+      "ci95": [
+        0.6443125116251489,
+        0.7268296376262979
+      ]
+    }
+  }
+}
